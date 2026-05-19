@@ -1,25 +1,23 @@
 export default async function handler(req, res) {
-  // 1. Get symbol from query (e.g. ?symbol=ADAUSDT)
-  const { symbol } = req.query;
-  
-  // 2. Capture the API Key from the headers sent by Google
-  const apiKey = req.headers['x-mbx-apikey'] || '';
+  // 1. Extract info from the Google Apps Script request
+  const { endpoint, ...params } = req.query;
+  const apiKey = req.headers['x-mbx-apikey'];
 
-  // 3. Build the Binance Futures URL
-  const target = `https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=${symbol || 'ADAUSDT'}`;
+  // 2. Build the correct Binance URL (Default to ticker if no endpoint provided)
+  const path = endpoint || '/fapi/v1/ticker/24hr';
+  const queryString = new URLSearchParams(params as any).toString();
+  const targetUrl = `https://fapi.binance.com${path}?${queryString}`;
 
   try {
-    const response = await fetch(target, {
-      method: 'GET',
+    const response = await fetch(targetUrl, {
+      method: req.method,
       headers: {
-        'X-MBX-APIKEY': apiKey, // Important: This authenticates the request
+        'X-MBX-APIKEY': apiKey as string || '',
         'Content-Type': 'application/json'
       }
     });
 
     const data = await response.json();
-    
-    // Return the data and the exact status code from Binance
     res.status(response.status).json(data);
   } catch (e) {
     res.status(500).json({ error: "Bridge Error", details: e.message });
