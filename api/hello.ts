@@ -1,18 +1,16 @@
 export default async function handler(req, res) {
-  // 1. Extract info from the Google Apps Script request
-  const { endpoint, ...params } = req.query;
-  const apiKey = req.headers['x-mbx-apikey'];
-
-  // 2. Build the correct Binance URL (Default to ticker if no endpoint provided)
-  const path = endpoint || '/fapi/v1/ticker/24hr';
+  // 1. Extract the target path from the query (e.g., /fapi/v1/ticker/24hr)
+  const { path, ...params } = req.query;
+  
+  // 2. Build the Binance URL
   const queryString = new URLSearchParams(params as any).toString();
-  const targetUrl = `https://fapi.binance.com${path}?${queryString}`;
+  const targetUrl = `https://fapi.binance.com${path || '/fapi/v1/ticker/24hr'}?${queryString}`;
 
   try {
     const response = await fetch(targetUrl, {
       method: req.method,
       headers: {
-        'X-MBX-APIKEY': apiKey as string || '',
+        'X-MBX-APIKEY': req.headers['x-mbx-apikey'] as string || '',
         'Content-Type': 'application/json'
       }
     });
@@ -20,6 +18,7 @@ export default async function handler(req, res) {
     const data = await response.json();
     res.status(response.status).json(data);
   } catch (e) {
-    res.status(500).json({ error: "Bridge Error", details: e.message });
+    // If it fails, send a JSON error, NOT an HTML page
+    res.status(500).json({ error: "Bridge Crash", message: e.message });
   }
 }
