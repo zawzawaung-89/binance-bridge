@@ -1,16 +1,27 @@
-// Replace your existing code in api/hello.ts with this:
 import { VercelRequest, VercelResponse } from '@vercel/node';
 
 export default async (req: VercelRequest, res: VercelResponse) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     
     try {
-        const { path, ...queryParams } = req.query;
-        if (!path) return res.status(400).json({ error: "Missing path" });
+        const { path, symbol, ...otherParams } = req.query;
+        
+        // 1. Determine target URL: If 'path' is provided, use it; otherwise, default to ticker
+        let targetUrl = 'https://fapi.binance.com';
+        
+        if (path) {
+            targetUrl += path;
+        } else if (symbol) {
+            targetUrl += `/fapi/v1/ticker/24hr?symbol=${symbol}`;
+        } else {
+            return res.status(400).json({ error: "Missing required parameters" });
+        }
 
-        // Build the URL dynamically
-        const queryString = new URLSearchParams(queryParams as any).toString();
-        const targetUrl = `https://fapi.binance.com${path}?${queryString}`;
+        // 2. Attach any additional query parameters (like limit)
+        const queryString = new URLSearchParams(otherParams as any).toString();
+        if (queryString) {
+            targetUrl += (targetUrl.includes('?') ? '&' : '?') + queryString;
+        }
 
         const response = await fetch(targetUrl);
         const data = await response.json();
