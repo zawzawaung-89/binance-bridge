@@ -4,66 +4,48 @@ export default async (req: VercelRequest, res: VercelResponse) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     
     try {
-        // 1. Get the raw URL directly to prevent any Vercel auto-formatting
         const rawUrl = req.url || '';
         const queryIndex = rawUrl.indexOf('?');
         
-        let targetUrl = 'https://demo-fapi.binance.com';
-        let finalQueryString = '';
-
-        if (queryIndex !== -1) {
-            // Extract the exact query string as a raw text block
-            const rawQuery = rawUrl.substring(queryIndex + 1);
-            
-            // Extract the 'path' parameter to know the destination
-            const urlParams = new URLSearchParams(rawQuery);
-            const targetPath = urlParams.get('path');
-            const symbol = urlParams.get('symbol'); // Fallback for public ticker requests
-            
-            if (targetPath) {
-                targetUrl += targetPath;
-            } else if (symbol) {
-                targetUrl += `/fapi/v1/ticker/24hr?symbol=${symbol}`;
-                const response = await fetch(targetUrl);
-                return res.status(200).json(await response.json());
-            } else {
-                return res.status(400).json({ error: "Missing 'path' parameter" });
-            }
-
-            // 2. THE CRITICAL FIX: Surgically remove ONLY the 'path' parameter
-            // We split the raw string and filter it to keep the exact original signature encoding intact
-            const queryParts = rawQuery.split('&');
-            const filteredParts = queryParts.filter(part => !part.startsWith('path='));
-            finalQueryString = filteredParts.join('&');
-        } else {
-            return res.status(400).json({ error: "No query parameters found" });
+        if (queryIndex === -1) {
+            return res.status(400).json({ error: "No query parameters found from Google Sheets." });
         }
 
-        // Attach the untouched signed query string to the Binance Demo URL
-        if (finalQueryString) {
-            targetUrl += '?' + finalQueryString;
-        }
+        // 1. Get the untouched, raw query string directly from the URL
+        const rawQueryString = rawUrl.substring(queryIndex + 1);
+        const queryParts = rawQueryString.split('&');
 
-        // 3. Grab the API key safely from headers
+        // 2. Parse out the destination path (always the first parameter: queryParts[0])
+        const pathPart = queryParts[0];
+        if (!pathPart || !pathPart.startsWith('path=')) {
+            return res.status(400).json({ error: "Missing or invalid 'path' parameter." });
+        }
+        const targetPath = decodeURIComponent(pathPart.split('=')[1] || '');
+
+        // 3. THE CRITICAL FIX: Slice away the proxy decorations
+        // queryParts[0] is 'path=...'
+        // queryParts[1] is the duplicate 'symbol=...' 
+        // Slicing from index 2 leaves ONLY the pristine, original signed query + signature string
+        const cleanBinanceQuery = queryParts.slice(2).join('&');
+
+        // 4. Construct the exact production-grade URL for Binance Demo
+        const binanceUrl = `https://demo-fapi.binance.com${targetPath}?${cleanBinanceQuery}`;
+
+        // 5. Extract the API key directly from the incoming header
         const apiKey = (req.headers['x-mbx-apikey'] || req.headers['X-MBX-APIKEY']) as string;
 
-        // 4. Handle request body safely if it's a POST request
-        let requestBody = undefined;
-        if (req.method !== 'GET' && req.method !== 'HEAD' && req.body) {
-            requestBody = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
-        }
-
-        // 5. Fire the exact payload to Binance Demo
-        const response = await fetch(targetUrl, {
+        // 6. Forward the untouched payload straight to Binance Demo
+        const response = await fetch(binanceUrl, {
             method: req.method,
             headers: {
                 'Content-Type': 'application/json',
                 ...(apiKey ? { 'X-MBX-APIKEY': apiKey } : {})
             },
-            body: requestBody
+            body: req.method !== 'GET' && req.method !== 'HEAD' && req.body 
+                ? (typeof req.body === 'string' ? req.body : JSON.stringify(req.body)) 
+                : undefined
         });
 
-        // 6. Return response safely
         const responseText = await response.text();
         let data;
         try {
@@ -73,6 +55,7 @@ export default async (req: VercelRequest, res: VercelResponse) => {
         }
 
         return res.status(response.status).json(data);
+
     } catch (error: any) {
         return res.status(500).json({ error: error.message });
     }
