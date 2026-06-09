@@ -1,31 +1,43 @@
-export default async function handler(req, res) {
-  try {
-    // 1. Extract the custom 'path' parameter sent from your Google Apps Script
-    const { path, ...otherParams } = req.query;
+import type { VercelRequest, VercelResponse } from '@vercel/node';
 
-    if (!path) {
-      return res.status(400).json({ error: "Missing 'path' parameter from Google Apps Script." });
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  try {
+    const reqUrl = req.url || '';
+    const urlParts = reqUrl.split('?');
+    const queryString = urlParts[1] || '';
+
+    if (!queryString) {
+      return res.status(400).json({ error: "Missing query parameters from Google Apps Script." });
     }
 
-    // 2. Grab the API Key forwarded from your Google Sheet headers
-    const apiKey = req.headers['x-mbx-apikey'] || req.headers['X-MBX-APIKEY'];
+    // Split parameters by '&' to isolate the proxy decorations
+    const queryParts = queryString.split('&');
+    
+    // Based on your Google Apps Script URL construction:
+    // queryParts[0] is always 'path=...'
+    // queryParts[1] is always the duplicate 'symbol=...'
+    const pathParam = queryParts[0]; 
+    if (!pathParam || !pathParam.startsWith('path=')) {
+      return res.status(400).json({ error: "Invalid proxy URL format. Missing path parameter." });
+    }
+
+    // Extract the exact endpoint path destination (e.g., /fapi/v1/order)
+    const targetPath = decodeURIComponent(pathParam.split('=')[1] || '');
+
+    // Reconstruct the EXACT raw query string signed by Google Apps Script.
+    // Slicing from index 2 drops 'path' and the duplicate 'symbol', leaving the clean signature intact.
+    const cleanBinanceQuery = queryParts.slice(2).join('&');
+
+    // Extract your authorization key directly from the incoming header
+    const apiKey = (req.headers['x-mbx-apikey'] || req.headers['X-MBX-APIKEY']) as string;
     if (!apiKey) {
       return res.status(400).json({ error: "API key missing from request headers." });
     }
 
-    // 3. Reconstruct the exact URL that Binance Demo expects
-    let binanceUrl = `https://demo-fapi.binance.com${path}`;
+    // Build the clean production-grade destination URL for Binance Demo
+    const binanceUrl = `https://demo-fapi.binance.com${targetPath}?${cleanBinanceQuery}`;
 
-    // Append the remaining signed parameters (symbol, timestamp, signature, etc.)
-    const queryString = Object.keys(otherParams)
-      .map(key => `${key}=${encodeURIComponent(otherParams[key])}`)
-      .join('&');
-
-    if (queryString) {
-      binanceUrl += (binanceUrl.includes('?') ? '&' : '?') + queryString;
-    }
-
-    // 4. Hand request off to Binance Demo
+    // Forward the pristine package directly to Binance
     const response = await fetch(binanceUrl, {
       method: req.method,
       headers: {
@@ -35,7 +47,6 @@ export default async function handler(req, res) {
       body: req.method !== 'GET' && req.method !== 'HEAD' ? JSON.stringify(req.body) : undefined
     });
 
-    // 5. Handle responses safely even if Binance throws an unparsed error text
     const responseText = await response.text();
     let responseData;
     try {
@@ -46,7 +57,7 @@ export default async function handler(req, res) {
 
     res.status(response.status).json(responseData);
 
-  } catch (error) {
+  } catch (error: any) {
     res.status(500).json({ 
       error: "Vercel Proxy failed to connect to Binance", 
       details: error.message 
