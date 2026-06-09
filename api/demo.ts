@@ -11,30 +11,31 @@ export default async (req: VercelRequest, res: VercelResponse) => {
             return res.status(400).json({ error: "No query parameters found from Google Sheets." });
         }
 
-        // 1. Get the untouched, raw query string directly from the URL
+        // 1. Capture the exact raw query string straight from the incoming URL
         const rawQueryString = rawUrl.substring(queryIndex + 1);
-        const queryParts = rawQueryString.split('&');
 
-        // 2. Parse out the destination path (always the first parameter: queryParts[0])
-        const pathPart = queryParts[0];
-        if (!pathPart || !pathPart.startsWith('path=')) {
-            return res.status(400).json({ error: "Missing or invalid 'path' parameter." });
+        // 2. Safely locate and extract the target path without changing any encoding
+        const urlParams = new URLSearchParams(rawQueryString);
+        const targetPath = urlParams.get('path');
+        
+        if (!targetPath) {
+            return res.status(400).json({ error: "Missing 'path' parameter from Google Apps Script request." });
         }
-        const targetPath = decodeURIComponent(pathPart.split('=')[1] || '');
 
-        // 3. THE CRITICAL FIX: Slice away the proxy decorations
-        // queryParts[0] is 'path=...'
-        // queryParts[1] is the duplicate 'symbol=...' 
-        // Slicing from index 2 leaves ONLY the pristine, original signed query + signature string
-        const cleanBinanceQuery = queryParts.slice(2).join('&');
+        // 3. SURGICAL CLEANUP: Remove ONLY the 'path=...' segment from the raw query string.
+        // This ensures every other parameter (symbol, timestamp, signature) keeps its exact positioning, 
+        // casing, and encoding identical to what your Google Sheet signed.
+        const queryParts = rawQueryString.split('&');
+        const cleanParts = queryParts.filter(part => !part.startsWith('path='));
+        const cleanBinanceQuery = cleanParts.join('&');
 
-        // 4. Construct the exact production-grade URL for Binance Demo
+        // 4. Combine with the Binance Demo endpoint
         const binanceUrl = `https://demo-fapi.binance.com${targetPath}?${cleanBinanceQuery}`;
 
-        // 5. Extract the API key directly from the incoming header
+        // 5. Forward the incoming authentication headers
         const apiKey = (req.headers['x-mbx-apikey'] || req.headers['X-MBX-APIKEY']) as string;
 
-        // 6. Forward the untouched payload straight to Binance Demo
+        // 6. Execute the request exactly as received (handles POST/GET/DELETE automatically)
         const response = await fetch(binanceUrl, {
             method: req.method,
             headers: {
@@ -46,6 +47,7 @@ export default async (req: VercelRequest, res: VercelResponse) => {
                 : undefined
         });
 
+        // 7. Deliver the clean response back to your Google Sheet
         const responseText = await response.text();
         let data;
         try {
