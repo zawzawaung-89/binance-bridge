@@ -1,66 +1,55 @@
-import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { VercelRequest, VercelResponse } from '@vercel/node';
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
-  try {
-    const reqUrl = req.url || '';
-    const urlParts = reqUrl.split('?');
-    const queryString = urlParts[1] || '';
-
-    if (!queryString) {
-      return res.status(400).json({ error: "Missing query parameters from Google Apps Script." });
-    }
-
-    // Split parameters by '&' to isolate the proxy decorations
-    const queryParts = queryString.split('&');
+export default async (req: VercelRequest, res: VercelResponse) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
     
-    // Based on your Google Apps Script URL construction:
-    // queryParts[0] is always 'path=...'
-    // queryParts[1] is always the duplicate 'symbol=...'
-    const pathParam = queryParts[0]; 
-    if (!pathParam || !pathParam.startsWith('path=')) {
-      return res.status(400).json({ error: "Invalid proxy URL format. Missing path parameter." });
-    }
-
-    // Extract the exact endpoint path destination (e.g., /fapi/v1/order)
-    const targetPath = decodeURIComponent(pathParam.split('=')[1] || '');
-
-    // Reconstruct the EXACT raw query string signed by Google Apps Script.
-    // Slicing from index 2 drops 'path' and the duplicate 'symbol', leaving the clean signature intact.
-    const cleanBinanceQuery = queryParts.slice(2).join('&');
-
-    // Extract your authorization key directly from the incoming header
-    const apiKey = (req.headers['x-mbx-apikey'] || req.headers['X-MBX-APIKEY']) as string;
-    if (!apiKey) {
-      return res.status(400).json({ error: "API key missing from request headers." });
-    }
-
-    // Build the clean production-grade destination URL for Binance Demo
-    const binanceUrl = `https://demo-fapi.binance.com${targetPath}?${cleanBinanceQuery}`;
-
-    // Forward the pristine package directly to Binance
-    const response = await fetch(binanceUrl, {
-      method: req.method,
-      headers: {
-        'Content-Type': 'application/json',
-        'X-MBX-APIKEY': apiKey
-      },
-      body: req.method !== 'GET' && req.method !== 'HEAD' ? JSON.stringify(req.body) : undefined
-    });
-
-    const responseText = await response.text();
-    let responseData;
     try {
-      responseData = JSON.parse(responseText);
-    } catch (e) {
-      responseData = { rawResponse: responseText };
+        const { path, symbol, ...otherParams } = req.query;
+        
+        // 1. Point to the Binance DEMO network instead of production
+        let targetUrl = 'https://demo-fapi.binance.com';
+        
+        if (path) {
+            targetUrl += path;
+        } else if (symbol) {
+            targetUrl += `/fapi/v1/ticker/24hr?symbol=${symbol}`;
+        } else {
+            return res.status(400).json({ error: "Missing required parameters" });
+        }
+
+        // 2. Attach additional query parameters (retaining your original logic)
+        const queryString = new URLSearchParams(otherParams as any).toString();
+        if (queryString) {
+            targetUrl += (targetUrl.includes('?') ? '&' : '?') + queryString;
+        }
+
+        // 3. Extract the API key forwarded from your Google Sheet headers
+        const apiKey = (req.headers['x-mbx-apikey'] || req.headers['X-MBX-APIKEY']) as string;
+
+        // 4. Forward the complete request (Method, Headers, and Body) to Binance Demo
+        const response = await fetch(targetUrl, {
+            method: req.method, // Automatically handles GET, POST, DELETE, etc.
+            headers: {
+                'Content-Type': 'application/json',
+                ...(apiKey ? { 'X-MBX-APIKEY': apiKey } : {}) // Safely injects the key if present
+            },
+            // Forward the body data for POST requests (like placing an order)
+            body: req.method !== 'GET' && req.method !== 'HEAD' && req.body 
+                ? (typeof req.body === 'string' ? req.body : JSON.stringify(req.body)) 
+                : undefined
+        });
+
+        // 5. Return the response safely to Google Apps Script
+        const responseText = await response.text();
+        let data;
+        try {
+            data = JSON.parse(responseText);
+        } catch (e) {
+            data = { rawResponse: responseText };
+        }
+
+        return res.status(response.status).json(data);
+    } catch (error: any) {
+        return res.status(500).json({ error: error.message });
     }
-
-    res.status(response.status).json(responseData);
-
-  } catch (error: any) {
-    res.status(500).json({ 
-      error: "Vercel Proxy failed to connect to Binance", 
-      details: error.message 
-    });
-  }
-}
+};
