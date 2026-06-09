@@ -1,33 +1,28 @@
-import { VercelRequest, VercelResponse } from '@vercel/node';
+export default async function handler(req, res) {
+  // 1. Set the target to the Binance Demo URL
+  const targetUrl = `https://demo-fapi.binance.com${req.url.replace('/api/demo', '')}`;
 
-export default async (req: VercelRequest, res: VercelResponse) => {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    
-    try {
-        const { path, symbol, ...otherParams } = req.query;
-        
-        // 1. Determine target URL: If 'path' is provided, use it; otherwise, default to ticker
-        let targetUrl = 'https://demo-fapi.binance.com';
-        
-        if (path) {
-            targetUrl += path;
-        } else if (symbol) {
-            targetUrl += `/fapi/v1/ticker/24hr?symbol=${symbol}`;
-        } else {
-            return res.status(400).json({ error: "Missing required parameters" });
-        }
+  // 2. Extract the keys sent DIRECTLY from Google Apps Script headers (ignoring Vercel settings)
+  const apiKey = req.headers['x-mbx-apikey'] || req.headers['X-MBX-APIKEY'];
 
-        // 2. Attach any additional query parameters (like limit)
-        const queryString = new URLSearchParams(otherParams as any).toString();
-        if (queryString) {
-            targetUrl += (targetUrl.includes('?') ? '&' : '?') + queryString;
-        }
+  if (!apiKey) {
+      return res.status(400).json({ error: "No API key received from Google Apps Script." });
+  }
 
-        const response = await fetch(targetUrl);
-        const data = await response.json();
+  // 3. Forward the exact request to Binance Demo
+  try {
+    const response = await fetch(targetUrl, {
+      method: req.method,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-MBX-APIKEY': apiKey // Passing your testnet key from Apps Script
+      },
+      body: req.method !== 'GET' ? JSON.stringify(req.body) : undefined
+    });
 
-        return res.status(200).json(data);
-    } catch (error: any) {
-        return res.status(500).json({ error: error.message });
-    }
-};
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (error) {
+    res.status(500).json({ error: 'Vercel Proxy failed to connect to Binance' });
+  }
+}
